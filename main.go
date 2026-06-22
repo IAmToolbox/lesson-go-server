@@ -1,5 +1,7 @@
 package main
 
+import _ "github.com/lib/pq"
+
 import (
 	"fmt"
 	"strings"
@@ -9,10 +11,14 @@ import (
 	"log"
 	"sync/atomic"
 	"encoding/json"
+	"database/sql"
+	"github.com/iamtoolbox/lesson-go-server/internal/database"
+	"github.com/joho/godotenv"
 )
 
 type apiConfig struct {
 	fileserverHits atomic.Int32
+	dbQueries *database.Queries
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -95,8 +101,19 @@ func validateChirp(w http.ResponseWriter, r *http.Request) { // This function wi
 }
 
 func main() {
+	// Database init
+	godotenv.Load() // Load environment variables
+	dbURL := os.Getenv("DB_URL")
+	db, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		log.Fatalf("Couldn't open SQL database: %w", err)
+	}
+
+	// Server code
 	mux := http.NewServeMux()
-	var config apiConfig
+	config := apiConfig{
+		dbQueries: database.New(db),
+	}
 	mux.Handle("/app/", config.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir("."))))) // Look at all those closing parenthesis brooo
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -127,7 +144,7 @@ func main() {
 		Handler: mux,
 	}
 
-	err := server.ListenAndServe()
+	err = server.ListenAndServe()
 	if err != nil {
 		fmt.Println("Server has been closed")
 		os.Exit(0)
