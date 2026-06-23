@@ -9,16 +9,26 @@ import (
 	"net/http"
 	"os"
 	"log"
+	"time"
 	"sync/atomic"
 	"encoding/json"
 	"database/sql"
 	"github.com/iamtoolbox/lesson-go-server/internal/database"
 	"github.com/joho/godotenv"
+	"github.com/google/uuid"
 )
 
 type apiConfig struct {
 	fileserverHits atomic.Int32
 	dbQueries *database.Queries
+	platform string
+}
+
+type User struct {
+	ID uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Email string `json:"email"`
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -29,10 +39,20 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 }
 
 func (cfg *apiConfig) metricsReset(w http.ResponseWriter, r *http.Request) {
+	if cfg.platform != "dev" {
+		w.WriteHeader(403)
+		return
+	}
+
 	cfg.fileserverHits.Swap(0)
+	err := cfg.dbQueries.DeleteAllUsers(r.Context())
+	if err != nil {
+		log.Fatalf("couldn't delete all users: %w", err)
+	}
+
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	_, err := w.Write([]byte("Hits Reset"))
+	_, err = w.Write([]byte("Server Reset"))
 	if err != nil {
 		log.Fatalf("failed to write response: %w", err)
 	}
@@ -59,6 +79,7 @@ func validateChirp(w http.ResponseWriter, r *http.Request) { // This function wi
 		data, err := json.Marshal(resBody)
 		if err != nil {
 			log.Fatalf("Couldn't marshal response: %w", err)
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(400)
@@ -73,6 +94,7 @@ func validateChirp(w http.ResponseWriter, r *http.Request) { // This function wi
 		data, err := json.Marshal(resBody)
 		if err != nil {
 			log.Fatalf("Couldn't marshal response: %w", err)
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(400)
@@ -113,6 +135,7 @@ func main() {
 	mux := http.NewServeMux()
 	config := apiConfig{
 		dbQueries: database.New(db),
+		platform: os.Getenv("PLATFORM"),
 	}
 	mux.Handle("/app/", config.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir("."))))) // Look at all those closing parenthesis brooo
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, req *http.Request) {
@@ -124,6 +147,41 @@ func main() {
 		}
 	})
 	mux.HandleFunc("POST /api/validate_chirp", validateChirp)
+	mux.HandleFunc("POST /api/users", func(w http.ResponseWriter, req *http.Request) {
+		type reqData struct {
+			Email string `json:"email"`
+		}
+		decoder := json.NewDecoder(req.Body)
+		reqDecoded := reqData{}
+		err := decoder.Decode(&reqDecoded)
+		if err != nil {
+			log.Fatalf("couldn't decode json data: %w", err)
+			return
+		}
+		newUser, err := config.dbQueries.CreateUser(req.Context(), reqDecoded.Email)
+		if err != nil {
+			log.Fatalf("couldn't create user: %w", err)
+			return
+		}
+
+		resBody := User{
+			ID: newUser.ID,
+			CreatedAt: newUser.CreatedAt,
+			UpdatedAt: newUser.UpdatedAt,
+			Email: newUser.Email,
+		}
+		data, err := json.Marshal(resBody)
+		if err != nil {
+			log.Fatalf("Couldn't marshal response: %w", err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(201)
+		_, err = w.Write(data)
+		if err != nil {
+			log.Fatalf("couldn't write response: %w", err)
+		}
+	})
 
 	mux.HandleFunc("GET /admin/metrics", func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
