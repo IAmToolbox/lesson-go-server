@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"slices"
+	"errors"
 	"net/http"
 	"os"
 	"log"
@@ -58,15 +59,20 @@ func (cfg *apiConfig) metricsReset(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func validateChirp(w http.ResponseWriter, r *http.Request) { // This function will decode and encode JSON
+func (cfg *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) { // This function will decode and encode JSON
 	type chirp struct {
 		Body string `json:"body"`
+		UserID uuid.NullUUID `json:"user_id"`
 	}
 	type resErr struct {
 		Error string `json:"error"`
 	}
 	type resVal struct {
-		CleanedBody string `json:"cleaned_body"`
+		ID uuid.UUID `json:"id"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+		Body string `json:"body"`
+		UserID uuid.NullUUID `json:"user_id"`
 	}
 
 	decoder:= json.NewDecoder(r.Body)
@@ -109,9 +115,91 @@ func validateChirp(w http.ResponseWriter, r *http.Request) { // This function wi
 		}
 	}
 	cleanWords := strings.Join(bodyWords, " ")
+	chirpData.Body = cleanWords
+
+	chirpArgs := database.CreateChirpParams{
+		Body: chirpData.Body,
+		UserID: chirpData.UserID,
+	}
+	newChirp, err := cfg.dbQueries.CreateChirp(r.Context(), chirpArgs)
+	if err != nil {
+		log.Fatalf("Couldn't add new chirp: %w", err)
+	}
 
 	resBody := resVal{
-		CleanedBody: cleanWords,
+		ID: newChirp.ID,
+		CreatedAt: newChirp.CreatedAt,
+		UpdatedAt: newChirp.UpdatedAt,
+		Body: newChirp.Body,
+		UserID: newChirp.UserID,
+	}
+	data, err := json.Marshal(resBody)
+	if err != nil {
+		log.Fatalf("Couldn't marshal response: %w", err)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	w.Write(data)
+}
+
+func (cfg *apiConfig) getAllChirps(w http.ResponseWriter, r *http.Request) {
+	type resVal struct {
+		ID uuid.UUID `json:"id"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+		Body string `json:"body"`
+		UserID uuid.NullUUID `json:"user_id"`
+	}
+
+	chirpsAsc, err := cfg.dbQueries.GetAllChirps(r.Context())
+	if err != nil {
+		log.Fatalf("couldn't get chirps: %w", err)
+	}
+	resBody := []resVal{}
+	for _, chirp := range chirpsAsc {
+		resBody = append(resBody, resVal{
+			ID: chirp.ID,
+			CreatedAt: chirp.CreatedAt,
+			UpdatedAt: chirp.UpdatedAt,
+			Body: chirp.Body,
+			UserID: chirp.UserID,
+		})
+	}
+	data, err := json.Marshal(resBody)
+	if err != nil {
+		log.Fatalf("couldn't marshal response: %w", err)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	w.Write(data)
+}
+
+func (cfg *apiConfig) getChirpByID(w http.ResponseWriter, r *http.Request) {
+	type resVal struct {
+		ID uuid.UUID `json:"id"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+		Body string `json:"body"`
+		UserID uuid.NullUUID `json:"user_id"`
+	}
+
+	parsedUUID, err := uuid.Parse(r.PathValue("chirpID"))
+	if err != nil {
+		log.Fatalf("couldn't parse uuid: %w", err)
+	}
+
+	chirp, err := cfg.dbQueries.GetChirpByID(r.Context(), parsedUUID)
+	if errors.Is(err, sql.ErrNoRows) {
+		w.WriteHeader(404)
+		return
+	}
+
+	resBody := resVal{
+		ID: chirp.ID,
+		CreatedAt: chirp.CreatedAt,
+		UpdatedAt: chirp.UpdatedAt,
+		Body: chirp.Body,
+		UserID: chirp.UserID,
 	}
 	data, err := json.Marshal(resBody)
 	if err != nil {
@@ -146,7 +234,9 @@ func main() {
 			log.Fatalf("failed to write response: %w", err)
 		}
 	})
-	mux.HandleFunc("POST /api/validate_chirp", validateChirp)
+	mux.HandleFunc("POST /api/chirps", config.createChirp)
+	mux.HandleFunc("GET /api/chirps", config.getAllChirps)
+	mux.HandleFunc("GET /api/chirps/{chirpID}", config.getChirpByID)
 	mux.HandleFunc("POST /api/users", func(w http.ResponseWriter, req *http.Request) {
 		type reqData struct {
 			Email string `json:"email"`
