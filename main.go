@@ -7,14 +7,16 @@ import (
 	"strings"
 	"slices"
 	"errors"
-	"net/http"
 	"os"
 	"log"
 	"time"
 	"sync/atomic"
 	"encoding/json"
 	"database/sql"
+	"net/http"
+
 	"github.com/iamtoolbox/lesson-go-server/internal/database"
+	"github.com/iamtoolbox/lesson-go-server/internal/auth"
 	"github.com/joho/godotenv"
 	"github.com/google/uuid"
 )
@@ -62,7 +64,7 @@ func (cfg *apiConfig) metricsReset(w http.ResponseWriter, r *http.Request) {
 func (cfg *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) { // This function will decode and encode JSON
 	type chirp struct {
 		Body string `json:"body"`
-		UserID uuid.NullUUID `json:"user_id"`
+		UserID uuid.UUID `json:"user_id"`
 	}
 	type resErr struct {
 		Error string `json:"error"`
@@ -72,7 +74,7 @@ func (cfg *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) { // T
 		CreatedAt time.Time `json:"created_at"`
 		UpdatedAt time.Time `json:"updated_at"`
 		Body string `json:"body"`
-		UserID uuid.NullUUID `json:"user_id"`
+		UserID uuid.UUID `json:"user_id"`
 	}
 
 	decoder:= json.NewDecoder(r.Body)
@@ -148,7 +150,7 @@ func (cfg *apiConfig) getAllChirps(w http.ResponseWriter, r *http.Request) {
 		CreatedAt time.Time `json:"created_at"`
 		UpdatedAt time.Time `json:"updated_at"`
 		Body string `json:"body"`
-		UserID uuid.NullUUID `json:"user_id"`
+		UserID uuid.UUID `json:"user_id"`
 	}
 
 	chirpsAsc, err := cfg.dbQueries.GetAllChirps(r.Context())
@@ -180,7 +182,7 @@ func (cfg *apiConfig) getChirpByID(w http.ResponseWriter, r *http.Request) {
 		CreatedAt time.Time `json:"created_at"`
 		UpdatedAt time.Time `json:"updated_at"`
 		Body string `json:"body"`
-		UserID uuid.NullUUID `json:"user_id"`
+		UserID uuid.UUID `json:"user_id"`
 	}
 
 	parsedUUID, err := uuid.Parse(r.PathValue("chirpID"))
@@ -239,6 +241,7 @@ func main() {
 	mux.HandleFunc("GET /api/chirps/{chirpID}", config.getChirpByID)
 	mux.HandleFunc("POST /api/users", func(w http.ResponseWriter, req *http.Request) {
 		type reqData struct {
+			Password string `json:"password"`
 			Email string `json:"email"`
 		}
 		decoder := json.NewDecoder(req.Body)
@@ -248,7 +251,16 @@ func main() {
 			log.Fatalf("couldn't decode json data: %w", err)
 			return
 		}
-		newUser, err := config.dbQueries.CreateUser(req.Context(), reqDecoded.Email)
+		hashedPassword, err := auth.HashPassword(reqDecoded.Password)
+		if err != nil {
+			log.Fatalf("couldn't hash password: %w", err)
+			return
+		}
+		userArgs := database.CreateUserParams{
+			HashedPassword: hashedPassword,
+			Email: reqDecoded.Email,
+		}
+		newUser, err := config.dbQueries.CreateUser(req.Context(), userArgs)
 		if err != nil {
 			log.Fatalf("couldn't create user: %w", err)
 			return
@@ -267,6 +279,48 @@ func main() {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(201)
+		_, err = w.Write(data)
+		if err != nil {
+			log.Fatalf("couldn't write response: %w", err)
+		}
+	})
+	mux.HandleFunc("POST /api/login", func(w http.ResponseWriter, r *http.Request) {
+		type reqData struct {
+			Password string `json:"password"`
+			Email string `json:"email"`
+		}
+		decoder := json.NewDecoder(r.Body)
+		reqDecoded := reqData{}
+		err := decoder.Decode(&reqDecoded)
+		if err != nil {
+			log.Fatalf("couldn't decode json data: %w", err)
+			return
+		}
+		user, err := config.dbQueries.GetUserByEmail(r.Context(), reqDecoded.Email)
+		if errors.Is(err, sql.ErrNoRows) {
+			w.WriteHeader(401)
+			w.Write([]byte("Incorrect email or password"))
+			return
+		}
+		match, err := auth.CheckPasswordHash(reqDecoded.Password, user.HashedPassword)
+		if match != true {
+			w.WriteHeader(401)
+			w.Write([]byte("Incorrect email or password"))
+			return
+		}
+		resBody := User{
+			ID: user.ID,
+			CreatedAt: user.CreatedAt,
+			UpdatedAt: user.UpdatedAt,
+			Email: user.Email,
+		}
+		data, err := json.Marshal(resBody)
+		if err != nil {
+			log.Fatalf("Couldn't marshal response: %w", err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
 		_, err = w.Write(data)
 		if err != nil {
 			log.Fatalf("couldn't write response: %w", err)
