@@ -50,14 +50,14 @@ func (cfg *apiConfig) metricsReset(w http.ResponseWriter, r *http.Request) {
 	cfg.fileserverHits.Swap(0)
 	err := cfg.dbQueries.DeleteAllUsers(r.Context())
 	if err != nil {
-		log.Fatalf("couldn't delete all users: %w", err)
+		log.Fatalf("couldn't delete all users: %v", err)
 	}
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, err = w.Write([]byte("Server Reset"))
 	if err != nil {
-		log.Fatalf("failed to write response: %w", err)
+		log.Fatalf("failed to write response: %v", err)
 	}
 }
 
@@ -86,7 +86,7 @@ func (cfg *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) { // T
 		}
 		data, err := json.Marshal(resBody)
 		if err != nil {
-			log.Fatalf("Couldn't marshal response: %w", err)
+			log.Fatalf("Couldn't marshal response: %v", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -101,7 +101,7 @@ func (cfg *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) { // T
 		}
 		data, err := json.Marshal(resBody)
 		if err != nil {
-			log.Fatalf("Couldn't marshal response: %w", err)
+			log.Fatalf("Couldn't marshal response: %v", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -125,7 +125,7 @@ func (cfg *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) { // T
 	}
 	newChirp, err := cfg.dbQueries.CreateChirp(r.Context(), chirpArgs)
 	if err != nil {
-		log.Fatalf("Couldn't add new chirp: %w", err)
+		log.Fatalf("Couldn't add new chirp: %v", err)
 	}
 
 	resBody := resVal{
@@ -137,7 +137,7 @@ func (cfg *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) { // T
 	}
 	data, err := json.Marshal(resBody)
 	if err != nil {
-		log.Fatalf("Couldn't marshal response: %w", err)
+		log.Fatalf("Couldn't marshal response: %v", err)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(201)
@@ -155,7 +155,7 @@ func (cfg *apiConfig) getAllChirps(w http.ResponseWriter, r *http.Request) {
 
 	chirpsAsc, err := cfg.dbQueries.GetAllChirps(r.Context())
 	if err != nil {
-		log.Fatalf("couldn't get chirps: %w", err)
+		log.Fatalf("couldn't get chirps: %v", err)
 	}
 	resBody := []resVal{}
 	for _, chirp := range chirpsAsc {
@@ -169,7 +169,7 @@ func (cfg *apiConfig) getAllChirps(w http.ResponseWriter, r *http.Request) {
 	}
 	data, err := json.Marshal(resBody)
 	if err != nil {
-		log.Fatalf("couldn't marshal response: %w", err)
+		log.Fatalf("couldn't marshal response: %v", err)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
@@ -187,7 +187,7 @@ func (cfg *apiConfig) getChirpByID(w http.ResponseWriter, r *http.Request) {
 
 	parsedUUID, err := uuid.Parse(r.PathValue("chirpID"))
 	if err != nil {
-		log.Fatalf("couldn't parse uuid: %w", err)
+		log.Fatalf("couldn't parse uuid: %v", err)
 	}
 
 	chirp, err := cfg.dbQueries.GetChirpByID(r.Context(), parsedUUID)
@@ -205,7 +205,7 @@ func (cfg *apiConfig) getChirpByID(w http.ResponseWriter, r *http.Request) {
 	}
 	data, err := json.Marshal(resBody)
 	if err != nil {
-		log.Fatalf("Couldn't marshal response: %w", err)
+		log.Fatalf("Couldn't marshal response: %v", err)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
@@ -218,7 +218,7 @@ func main() {
 	dbURL := os.Getenv("DB_URL")
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
-		log.Fatalf("Couldn't open SQL database: %w", err)
+		log.Fatalf("Couldn't open SQL database: %v", err)
 	}
 
 	// Server code
@@ -233,7 +233,7 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, err := w.Write([]byte("OK"))
 		if err != nil {
-			log.Fatalf("failed to write response: %w", err)
+			log.Fatalf("failed to write response: %v", err)
 		}
 	})
 	mux.HandleFunc("POST /api/chirps", config.createChirp)
@@ -248,12 +248,12 @@ func main() {
 		reqDecoded := reqData{}
 		err := decoder.Decode(&reqDecoded)
 		if err != nil {
-			log.Fatalf("couldn't decode json data: %w", err)
+			log.Fatalf("couldn't decode json data: %v", err)
 			return
 		}
 		hashedPassword, err := auth.HashPassword(reqDecoded.Password)
 		if err != nil {
-			log.Fatalf("couldn't hash password: %w", err)
+			log.Fatalf("couldn't hash password: %v", err)
 			return
 		}
 		userArgs := database.CreateUserParams{
@@ -262,7 +262,7 @@ func main() {
 		}
 		newUser, err := config.dbQueries.CreateUser(req.Context(), userArgs)
 		if err != nil {
-			log.Fatalf("couldn't create user: %w", err)
+			log.Fatalf("couldn't create user: %v", err)
 			return
 		}
 
@@ -274,14 +274,14 @@ func main() {
 		}
 		data, err := json.Marshal(resBody)
 		if err != nil {
-			log.Fatalf("Couldn't marshal response: %w", err)
+			log.Fatalf("Couldn't marshal response: %v", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(201)
 		_, err = w.Write(data)
 		if err != nil {
-			log.Fatalf("couldn't write response: %w", err)
+			log.Fatalf("couldn't write response: %v", err)
 		}
 	})
 	mux.HandleFunc("POST /api/login", func(w http.ResponseWriter, r *http.Request) {
@@ -293,7 +293,7 @@ func main() {
 		reqDecoded := reqData{}
 		err := decoder.Decode(&reqDecoded)
 		if err != nil {
-			log.Fatalf("couldn't decode json data: %w", err)
+			log.Fatalf("couldn't decode json data: %v", err)
 			return
 		}
 		user, err := config.dbQueries.GetUserByEmail(r.Context(), reqDecoded.Email)
@@ -316,14 +316,14 @@ func main() {
 		}
 		data, err := json.Marshal(resBody)
 		if err != nil {
-			log.Fatalf("Couldn't marshal response: %w", err)
+			log.Fatalf("Couldn't marshal response: %v", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
 		_, err = w.Write(data)
 		if err != nil {
-			log.Fatalf("couldn't write response: %w", err)
+			log.Fatalf("couldn't write response: %v", err)
 		}
 	})
 
@@ -337,7 +337,7 @@ func main() {
 			</body>
 		</html>`, config.fileserverHits.Load())))
 		if err != nil {
-			log.Fatalf("failed to write response: %w", err)
+			log.Fatalf("failed to write response: %v", err)
 		}
 	})
 	mux.HandleFunc("POST /admin/reset", config.metricsReset)

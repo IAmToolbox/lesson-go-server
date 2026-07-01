@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"log"
 	"time"
 
 	"github.com/alexedwards/argon2id"
@@ -27,7 +26,7 @@ func MakeJWT(userID uuid.UUID, tokenSecret string, expiresIn time.Duration) (str
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
 		Issuer: "chirpy-access",
 		IssuedAt: jwt.NewNumericDate(time.Now()),
-		ExpiresAt: expiresIn,
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(expiresIn)),
 		Subject: userID.String(),
 	})
 	tokenString, err := token.SignedString([]byte(tokenSecret))
@@ -35,11 +34,14 @@ func MakeJWT(userID uuid.UUID, tokenSecret string, expiresIn time.Duration) (str
 }
 
 func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
-	token, err := jwt.ParseWithClaims(tokenString, jwt.RegisteredClaims{}, func(token *jwt.Token) (any, error) {
+	claims := jwt.RegisteredClaims{}
+	token, err := jwt.ParseWithClaims(tokenString, &claims, func(token *jwt.Token) (any, error) {
 		return []byte(tokenSecret), nil
 	})
 	if err != nil {
-		log.Fatal(err)
+		return uuid.Nil, err
 	}
-	return uuid.Parse(token.Claims.Subject), nil
+	subject, err := token.Claims.GetSubject()
+	validatedID, err := uuid.Parse(subject)
+	return validatedID, err
 }
