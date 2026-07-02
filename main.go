@@ -25,6 +25,7 @@ type apiConfig struct {
 	fileserverHits atomic.Int32
 	dbQueries *database.Queries
 	platform string
+	secret string
 }
 
 type User struct {
@@ -32,6 +33,7 @@ type User struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Email string `json:"email"`
+	Token string `json:"token"`
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -94,6 +96,7 @@ func (cfg *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) { // T
 		w.Write(data)
 		return
 	}
+	bearerToken, err := auth.GetBearerToken()
 
 	if len(chirpData.Body) > 140 {
 		resBody := resErr{
@@ -226,6 +229,7 @@ func main() {
 	config := apiConfig{
 		dbQueries: database.New(db),
 		platform: os.Getenv("PLATFORM"),
+		secret: os.Getenv("SECRET"),
 	}
 	mux.Handle("/app/", config.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir("."))))) // Look at all those closing parenthesis brooo
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, req *http.Request) {
@@ -288,6 +292,7 @@ func main() {
 		type reqData struct {
 			Password string `json:"password"`
 			Email string `json:"email"`
+			ExpiresInSeconds int `json:"expires_in_seconds,omitempty"`
 		}
 		decoder := json.NewDecoder(r.Body)
 		reqDecoded := reqData{}
@@ -308,11 +313,23 @@ func main() {
 			w.Write([]byte("Incorrect email or password"))
 			return
 		}
+		var tokenDuration time.Duration
+		if reqData.ExpiresInSeconds == 0 || reqData.ExpiresInSeconds > 3600 {
+			tokenDuration = 3600 * time.Second
+		}
+		else {
+			tokenDuration = reqData.ExpiresInSeconds * time.Second
+		}
+		userToken, err := auth.MakeJWT(user.ID, config.secret, tokenDuration)
+		if err != nil {
+			log.Fatalf("couldn't make user token: %v", err)
+		}
 		resBody := User{
 			ID: user.ID,
 			CreatedAt: user.CreatedAt,
 			UpdatedAt: user.UpdatedAt,
 			Email: user.Email,
+			Token: userToken,
 		}
 		data, err := json.Marshal(resBody)
 		if err != nil {
