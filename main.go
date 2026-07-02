@@ -66,7 +66,6 @@ func (cfg *apiConfig) metricsReset(w http.ResponseWriter, r *http.Request) {
 func (cfg *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) { // This function will decode and encode JSON
 	type chirp struct {
 		Body string `json:"body"`
-		UserID uuid.UUID `json:"user_id"`
 	}
 	type resErr struct {
 		Error string `json:"error"`
@@ -96,7 +95,15 @@ func (cfg *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) { // T
 		w.Write(data)
 		return
 	}
-	bearerToken, err := auth.GetBearerToken()
+	bearerToken, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		log.Fatalf("bearer token not found: %v", err)
+	}
+	validatedID, err := auth.ValidateJWT(bearerToken, cfg.secret)
+	if err != nil {
+		w.WriteHeader(401)
+		return
+	}
 
 	if len(chirpData.Body) > 140 {
 		resBody := resErr{
@@ -124,7 +131,7 @@ func (cfg *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) { // T
 
 	chirpArgs := database.CreateChirpParams{
 		Body: chirpData.Body,
-		UserID: chirpData.UserID,
+		UserID: validatedID,
 	}
 	newChirp, err := cfg.dbQueries.CreateChirp(r.Context(), chirpArgs)
 	if err != nil {
@@ -136,7 +143,7 @@ func (cfg *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) { // T
 		CreatedAt: newChirp.CreatedAt,
 		UpdatedAt: newChirp.UpdatedAt,
 		Body: newChirp.Body,
-		UserID: newChirp.UserID,
+		UserID: validatedID,
 	}
 	data, err := json.Marshal(resBody)
 	if err != nil {
@@ -314,11 +321,10 @@ func main() {
 			return
 		}
 		var tokenDuration time.Duration
-		if reqData.ExpiresInSeconds == 0 || reqData.ExpiresInSeconds > 3600 {
+		if reqDecoded.ExpiresInSeconds == 0 || reqDecoded.ExpiresInSeconds > 3600 {
 			tokenDuration = 3600 * time.Second
-		}
-		else {
-			tokenDuration = reqData.ExpiresInSeconds * time.Second
+		} else {
+			tokenDuration = time.Duration(reqDecoded.ExpiresInSeconds) * time.Second
 		}
 		userToken, err := auth.MakeJWT(user.ID, config.secret, tokenDuration)
 		if err != nil {

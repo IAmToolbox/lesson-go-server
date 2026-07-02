@@ -54,8 +54,7 @@ func GetBearerToken(headers http.Header) (string, error) {
 	if strings.Contains(authHeader, "Bearer") {
 		tokenString := strings.Split(authHeader, " ")
 		return tokenString[1], nil
-	}
-	else {
+	} else {
 		return "", errors.New("couldn't get bearer token")
 	}
 }

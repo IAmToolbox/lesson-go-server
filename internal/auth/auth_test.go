@@ -28,3 +28,17 @@ func TestParseToken(t *testing.T) {
 		t.Errorf("IDs mismatched: %s %s", id.String(), parsedID.String())
 	}
 }
+
+func TestIDCollission(t *testing.T) {
+	token, err := MakeJWT(uuid.New(), "the seecreeeeet", 5 * time.Second)
+	if reflect.TypeOf(token).Kind() != reflect.String {
+		t.Errorf(`Token: %v Error: %v`, token, err)
+	}
+	otherToken, err := MakeJWT(uuid.New(), "the seecreeeeet", 5 * time.Second)
+	if reflect.TypeOf(otherToken).Kind() != reflect.String {
+		t.Errorf(`Token: %v Error: %v`, otherToken, err)
+	}
+	if token == otherToken {
+		t.Errorf(`Tokens %v and %v are the same`, token, otherToken)
+	}
+}
