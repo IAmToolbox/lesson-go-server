@@ -34,6 +34,7 @@ type User struct {
 	UpdatedAt time.Time `json:"updated_at"`
 	Email string `json:"email"`
 	Token string `json:"token"`
+	RefreshToken string `json:"refresh_token"`
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -299,7 +300,6 @@ func main() {
 		type reqData struct {
 			Password string `json:"password"`
 			Email string `json:"email"`
-			ExpiresInSeconds int `json:"expires_in_seconds,omitempty"`
 		}
 		decoder := json.NewDecoder(r.Body)
 		reqDecoded := reqData{}
@@ -320,27 +320,29 @@ func main() {
 			w.Write([]byte("Incorrect email or password"))
 			return
 		}
-		var tokenDuration time.Duration
-		if reqDecoded.ExpiresInSeconds == 0 || reqDecoded.ExpiresInSeconds > 3600 {
-			tokenDuration = 3600 * time.Second
-		} else {
-			tokenDuration = time.Duration(reqDecoded.ExpiresInSeconds) * time.Second
-		}
+		tokenDuration := 3600 * time.Second
 		userToken, err := auth.MakeJWT(user.ID, config.secret, tokenDuration)
 		if err != nil {
-			log.Fatalf("couldn't make user token: %v", err)
+			log.Fatalf("couldn't make user access token: %v", err)
 		}
+		userRefreshToken := auth.MakeRefreshToken()
+		refreshTokenArgs := database.AddRefreshTokenParams{
+			Token: userRefreshToken,
+			UserID: user.ID,
+			ExpiresAt: time.Now().Add(tokenDuration),
+		}
+		config.dbQueries.AddRefreshToken(r.Context(), refreshTokenArgs)
 		resBody := User{
 			ID: user.ID,
 			CreatedAt: user.CreatedAt,
 			UpdatedAt: user.UpdatedAt,
 			Email: user.Email,
 			Token: userToken,
+			RefreshToken: userRefreshToken,
 		}
 		data, err := json.Marshal(resBody)
 		if err != nil {
 			log.Fatalf("Couldn't marshal response: %v", err)
-			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
@@ -348,6 +350,52 @@ func main() {
 		if err != nil {
 			log.Fatalf("couldn't write response: %v", err)
 		}
+	})
+	mux.HandleFunc("POST /api/refresh", func(w http.ResponseWriter, r *http.Request) {
+		type resVal struct {
+			Token string `json:"token"`
+		}
+		bearerToken, err := auth.GetBearerToken(r.Header)
+		if err != nil {
+			log.Fatalf("bearer token not found: %v", err)
+		}
+		user, err := config.dbQueries.GetUserFromRefreshToken(r.Context(), bearerToken)
+		if errors.Is(err, sql.ErrNoRows) {
+			w.WriteHeader(401)
+			return
+		}
+		revokedTime, err := config.dbQueries.GetRefreshTokenStatus(r.Context(), bearerToken)
+		if revokedTime.Valid {
+			w.WriteHeader(401)
+			return
+		}
+
+		tokenDuration := 3600 * time.Second
+		newToken, err := auth.MakeJWT(user.ID, config.secret, tokenDuration)
+		if err != nil {
+			log.Fatalf("couldn't make user access token: %v", err)
+		}
+		resBody := resVal{
+			Token: newToken,
+		}
+		data, err := json.Marshal(resBody)
+		if err != nil {
+			log.Fatalf("Couldn't marshal response: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, err = w.Write(data)
+		if err != nil {
+			log.Fatalf("couldn't write response: %v", err)
+		}
+	})
+	mux.HandleFunc("POST /api/revoke", func(w http.ResponseWriter, r *http.Request) {
+		bearerToken, err := auth.GetBearerToken(r.Header)
+		if err != nil {
+			log.Fatalf("bearer token not found: %v", err)
+		}
+		config.dbQueries.RevokeRefreshToken(r.Context(), bearerToken)
+		w.WriteHeader(204)
 	})
 
 	mux.HandleFunc("GET /admin/metrics", func(w http.ResponseWriter, req *http.Request) {
