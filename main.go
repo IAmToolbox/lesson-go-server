@@ -251,6 +251,34 @@ func main() {
 	mux.HandleFunc("POST /api/chirps", config.createChirp)
 	mux.HandleFunc("GET /api/chirps", config.getAllChirps)
 	mux.HandleFunc("GET /api/chirps/{chirpID}", config.getChirpByID)
+	mux.HandleFunc("DELETE /api/chirps/{chirpID}", func(w http.ResponseWriter, r *http.Request) {
+		bearerToken, err := auth.GetBearerToken(r.Header)
+		if err != nil {
+			w.WriteHeader(401)
+			return
+		}
+		validatedID, err := auth.ValidateJWT(bearerToken, config.secret)
+		if err != nil {
+			w.WriteHeader(401)
+			return
+		}
+		parsedUUID, err := uuid.Parse(r.PathValue("chirpID"))
+		if err != nil {
+			log.Fatalf("couldn't parse uuid: %v", err)
+		}
+		chirp, err := config.dbQueries.GetChirpByID(r.Context(), parsedUUID)
+		if errors.Is(err, sql.ErrNoRows) {
+			w.WriteHeader(404)
+			return
+		}
+
+		if validatedID == chirp.UserID {
+			config.dbQueries.DeleteChirp(r.Context(), parsedUUID)
+			w.WriteHeader(204)
+		} else {
+			w.WriteHeader(403)
+		}
+	})
 	mux.HandleFunc("POST /api/users", func(w http.ResponseWriter, req *http.Request) {
 		type reqData struct {
 			Password string `json:"password"`
@@ -339,6 +367,61 @@ func main() {
 			Email: user.Email,
 			Token: userToken,
 			RefreshToken: userRefreshToken,
+		}
+		data, err := json.Marshal(resBody)
+		if err != nil {
+			log.Fatalf("Couldn't marshal response: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, err = w.Write(data)
+		if err != nil {
+			log.Fatalf("couldn't write response: %v", err)
+		}
+	})
+	mux.HandleFunc("PUT /api/users", func(w http.ResponseWriter, r *http.Request) {
+		type reqData struct {
+			Password string `json:"password"`
+			Email string `json:"email"`
+		}
+		decoder := json.NewDecoder(r.Body)
+		reqDecoded := reqData{}
+		err := decoder.Decode(&reqDecoded)
+		if err != nil {
+			log.Fatalf("couldn't decode json data: %v", err)
+			return
+		}
+
+		bearerToken, err := auth.GetBearerToken(r.Header)
+		if err != nil {
+			w.WriteHeader(401)
+			return
+		}
+		validatedID, err := auth.ValidateJWT(bearerToken, config.secret)
+		if err != nil {
+			w.WriteHeader(401)
+			return
+		}
+		_, err = config.dbQueries.GetUserByID(r.Context(), validatedID)
+		if errors.Is(err, sql.ErrNoRows) {
+			w.WriteHeader(401)
+			return
+		}
+		hashedPassword, err := auth.HashPassword(reqDecoded.Password)
+		updateArgs := database.UpdateUserByIDParams{
+			ID: validatedID,
+			Email: reqDecoded.Email,
+			HashedPassword: hashedPassword,
+		}
+		updatedUser, err := config.dbQueries.UpdateUserByID(r.Context(), updateArgs)
+		refreshToken, err := config.dbQueries.GetRefreshTokenFromUserID(r.Context(), validatedID)
+		resBody := User{
+			ID: validatedID,
+			CreatedAt: updatedUser.CreatedAt,
+			UpdatedAt: updatedUser.UpdatedAt,
+			Email: updatedUser.Email,
+			Token: bearerToken,
+			RefreshToken: refreshToken,
 		}
 		data, err := json.Marshal(resBody)
 		if err != nil {

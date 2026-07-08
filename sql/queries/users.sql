@@ -12,10 +12,18 @@ RETURNING *;
 -- name: GetUserByEmail :one
 SELECT * FROM users WHERE email = $1;
 
+-- name: GetUserByID :one
+SELECT * FROM users WHERE id = $1;
+
 -- name: GetUserFromRefreshToken :one
 SELECT * FROM users WHERE id IN(
     SELECT user_id FROM refresh_tokens WHERE token = $1
 );
+
+-- name: UpdateUserByID :one
+UPDATE users SET email = $2, hashed_password = $3, updated_at = NOW()
+WHERE id = $1
+RETURNING *;
 
 -- name: DeleteAllUsers :exec
 DELETE FROM users;

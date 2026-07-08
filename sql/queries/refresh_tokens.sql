@@ -12,5 +12,8 @@ VALUES (
 -- name: GetRefreshTokenStatus :one
 SELECT revoked_at FROM refresh_tokens WHERE token = $1;
 
+-- name: GetRefreshTokenFromUserID :one
+SELECT token FROM refresh_tokens WHERE user_id = $1;
+
 -- name: RevokeRefreshToken :exec
 UPDATE refresh_tokens SET revoked_at = NOW(), updated_at = NOW() WHERE token = $1;
