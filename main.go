@@ -25,6 +25,7 @@ type apiConfig struct {
 	fileserverHits atomic.Int32
 	dbQueries *database.Queries
 	platform string
+	polkaKey string
 	secret string
 }
 
@@ -35,6 +36,7 @@ type User struct {
 	Email string `json:"email"`
 	Token string `json:"token"`
 	RefreshToken string `json:"refresh_token"`
+	IsChirpyRed bool `json:"is_chirpy_red"`
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -163,28 +165,61 @@ func (cfg *apiConfig) getAllChirps(w http.ResponseWriter, r *http.Request) {
 		Body string `json:"body"`
 		UserID uuid.UUID `json:"user_id"`
 	}
-
-	chirpsAsc, err := cfg.dbQueries.GetAllChirps(r.Context())
-	if err != nil {
-		log.Fatalf("couldn't get chirps: %v", err)
+	authorID := r.URL.Query().Get("author_id")
+	if authorID == "" {
+		chirpsAsc, err := cfg.dbQueries.GetAllChirps(r.Context())
+		if err != nil {
+			log.Fatalf("couldn't get chirps: %v", err)
+		}
+		resBody := []resVal{}
+		for _, chirp := range chirpsAsc {
+			resBody = append(resBody, resVal{
+				ID: chirp.ID,
+				CreatedAt: chirp.CreatedAt,
+				UpdatedAt: chirp.UpdatedAt,
+				Body: chirp.Body,
+				UserID: chirp.UserID,
+			})
+		}
+		sortQuery := r.URL.Query().Get("sort")
+		if sortQuery == "desc" {
+			slices.Reverse(resBody)
+		}
+		data, err := json.Marshal(resBody)
+		if err != nil {
+			log.Fatalf("couldn't marshal response: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		w.Write(data)
+	} else {
+		parsedAuthorID, err := uuid.Parse(authorID)
+		chirpsAsc, err := cfg.dbQueries.GetChirpsFromAuthor(r.Context(), parsedAuthorID)
+		if err != nil {
+			log.Fatalf("couldn't get chirps: %v", err)
+		}
+		resBody := []resVal{}
+		for _, chirp := range chirpsAsc {
+			resBody = append(resBody, resVal{
+				ID: chirp.ID,
+				CreatedAt: chirp.CreatedAt,
+				UpdatedAt: chirp.UpdatedAt,
+				Body: chirp.Body,
+				UserID: chirp.UserID,
+			})
+		}
+		sortQuery := r.URL.Query().Get("sort")
+		if sortQuery == "desc" {
+			slices.Reverse(resBody)
+		}
+		data, err := json.Marshal(resBody)
+		if err != nil {
+			log.Fatalf("couldn't marshal response: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		w.Write(data)
 	}
-	resBody := []resVal{}
-	for _, chirp := range chirpsAsc {
-		resBody = append(resBody, resVal{
-			ID: chirp.ID,
-			CreatedAt: chirp.CreatedAt,
-			UpdatedAt: chirp.UpdatedAt,
-			Body: chirp.Body,
-			UserID: chirp.UserID,
-		})
-	}
-	data, err := json.Marshal(resBody)
-	if err != nil {
-		log.Fatalf("couldn't marshal response: %v", err)
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	w.Write(data)
 }
 
 func (cfg *apiConfig) getChirpByID(w http.ResponseWriter, r *http.Request) {
@@ -237,6 +272,7 @@ func main() {
 	config := apiConfig{
 		dbQueries: database.New(db),
 		platform: os.Getenv("PLATFORM"),
+		polkaKey: os.Getenv("POLKA_KEY"),
 		secret: os.Getenv("SECRET"),
 	}
 	mux.Handle("/app/", config.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir("."))))) // Look at all those closing parenthesis brooo
@@ -311,6 +347,7 @@ func main() {
 			CreatedAt: newUser.CreatedAt,
 			UpdatedAt: newUser.UpdatedAt,
 			Email: newUser.Email,
+			IsChirpyRed: newUser.IsChirpyRed,
 		}
 		data, err := json.Marshal(resBody)
 		if err != nil {
@@ -367,6 +404,7 @@ func main() {
 			Email: user.Email,
 			Token: userToken,
 			RefreshToken: userRefreshToken,
+			IsChirpyRed: user.IsChirpyRed,
 		}
 		data, err := json.Marshal(resBody)
 		if err != nil {
@@ -422,6 +460,7 @@ func main() {
 			Email: updatedUser.Email,
 			Token: bearerToken,
 			RefreshToken: refreshToken,
+			IsChirpyRed: updatedUser.IsChirpyRed,
 		}
 		data, err := json.Marshal(resBody)
 		if err != nil {
@@ -479,6 +518,41 @@ func main() {
 		}
 		config.dbQueries.RevokeRefreshToken(r.Context(), bearerToken)
 		w.WriteHeader(204)
+	})
+	mux.HandleFunc("POST /api/polka/webhooks", func(w http.ResponseWriter, r *http.Request) {
+		type reqData struct {
+			Event string `json:"event"`
+			Data struct {
+				UserID string `json:"user_id"`
+			} `json:"data"`
+		}
+		// I hope the json tags work properly, or I will have BEEF with that StackOverflow thread reply
+
+		apiKey, err := auth.GetAPIKey(r.Header)
+		if apiKey != config.polkaKey || err != nil {
+			w.WriteHeader(401)
+			return
+		}
+
+		decoder := json.NewDecoder(r.Body)
+		reqDecoded := reqData{}
+		err = decoder.Decode(&reqDecoded)
+		if err != nil {
+			log.Fatalf("couldn't decode json data: %v", err)
+			return
+		}
+		fmt.Println(reqDecoded.Event)
+		if reqDecoded.Event == "user.upgraded" {
+			parsedID, err := uuid.Parse(reqDecoded.Data.UserID)
+			_, err = config.dbQueries.UpgradeChirpyRed(r.Context(), parsedID)
+			if errors.Is(err, sql.ErrNoRows) {
+				w.WriteHeader(404)
+			} else {
+				w.WriteHeader(204)
+			}
+		} else {
+			w.WriteHeader(204)
+		}
 	})
 
 	mux.HandleFunc("GET /admin/metrics", func(w http.ResponseWriter, req *http.Request) {
